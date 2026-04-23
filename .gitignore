@@ -1,0 +1,16 @@
+.DS_Store
+.claude/
+Bildschirmfoto*.png
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Build outputs
+build_tmp/
+dist/
+*.spec
+
+# Generated assets (regenerated in CI)
+assets/*.ico

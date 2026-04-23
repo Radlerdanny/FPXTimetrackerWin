@@ -1,0 +1,56 @@
+FPX Timetracker – Windows
+═══════════════════════════════════════════════════════════════
+
+Installation
+────────────
+1) "FPXTimetracker-Setup-x.y.z.exe" von GitHub Releases laden:
+   https://github.com/Radlerdanny/FPXTimetrackerWin/releases/latest
+
+2) Doppelklick auf den Installer.
+   Falls Windows SmartScreen warnt:
+     → "Weitere Informationen"  → "Trotzdem ausführen"
+
+3) Im Setup-Assistenten:
+     ✓  Desktop-Verknüpfung erstellen  (empfohlen)
+     ☐  Automatisch mit Windows starten  (optional)
+
+4) Nach der Installation startet die App automatisch.
+   In der Taskleiste unten rechts erscheint das FPX-Icon
+   (ggf. hinter dem "^"-Pfeil).
+
+Erster Start
+────────────
+Beim ersten Start fragt die App nach:
+  • PROAD API-Key (PROAD → Benutzer → PROAD API → Key kopieren)
+  • Name des Projektmanagers
+
+Bedienung
+─────────
+Tray-Icon (unten rechts neben der Uhr):
+  • Linksklick  → Popover ein-/ausblenden
+  • Rechtsklick → Menü: Großes Fenster, Updates suchen, Beenden
+
+Timer:
+  • ▶ / ⏸ neben jedem Todo
+Tag abschließen:
+  • Grüner Button unten → überträgt Zeiten + Status nach PROAD
+
+Daten
+─────
+Alle Daten (API-Key, Sessions, Einstellungen) liegen in:
+   %APPDATA%\FPXTimetracker
+
+Updates
+───────
+Die App prüft beim Start automatisch auf neue Versionen und
+fragt nach, bevor der Installer geladen und ausgeführt wird.
+Deine Daten bleiben erhalten.
+
+Deinstallation
+──────────────
+Windows-Einstellungen → Apps → FPX Timetracker → Deinstallieren.
+Du wirst gefragt, ob die Benutzerdaten mit gelöscht werden sollen.
+
+Bei Problemen
+─────────────
+Daniel Losch Bescheid sagen 😊
