@@ -223,28 +223,30 @@ class FPXTimeTracker:
 
     def _build_window(self):
         self.root = tk.Tk(); self.root.title("FPX TimeTracker"); _apply_icon(self.root)
-        # Tk-Font-Scaling passend zum Windows-DPI: Point-Größen werden automatisch skaliert
         try:
-            dpi = self.root.winfo_fpixels("1i")
-            self.root.tk.call("tk", "scaling", dpi / 72.0)
+            self.root.tk.call("tk", "scaling", SCALE)
         except Exception: pass
         self.root.update_idletasks()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         if POPOVER_MODE:
-            self._W, self._H = s(380), min(s(660), int(sh * 0.76))
             wl, wt, wr, wb, edge = get_work_area()
+            work_h = wb - wt
+            self._W = s(380)
+            self._H = min(s(740), int(work_h * 0.93))
             pad = s(8)
+            # Reserve space for taskbar – also handles auto-hide taskbar (wb == sh)
+            tb_reserve = s(50)
             if edge == "bottom":
-                self._X = wr - self._W - pad; self._Y = wb - self._H - pad
+                self._X = wr - self._W - pad; self._Y = sh - self._H - tb_reserve
                 self._anim_dir = "up"
             elif edge == "top":
                 self._X = wr - self._W - pad; self._Y = wt + pad
                 self._anim_dir = "down"
             elif edge == "left":
-                self._X = wl + pad;           self._Y = wb - self._H - pad
+                self._X = wl + pad;           self._Y = sh - self._H - tb_reserve
                 self._anim_dir = "right"
             else:  # right
-                self._X = wr - self._W - pad; self._Y = wb - self._H - pad
+                self._X = wr - self._W - pad; self._Y = sh - self._H - tb_reserve
                 self._anim_dir = "left"
             self._TBH = 0
             self.root.geometry(f"{self._W}x{self._H}+{self._X}+{self._Y}")
@@ -259,8 +261,8 @@ class FPXTimeTracker:
             self.root.configure(bg=C["bg"]); self.root.resizable(False, True); self.root.minsize(s(460), s(420))
             self.root.protocol("WM_DELETE_WINDOW", lambda: self.root.destroy())
         try:
-            s = ttk.Style(); s.theme_use("clam")
-            s.configure("Vertical.TScrollbar", background=C["border"], troughcolor=C["bg"], arrowcolor=C["text_dim"], bordercolor=C["bg"])
+            _st = ttk.Style(); _st.theme_use("clam")
+            _st.configure("Vertical.TScrollbar", background=C["border"], troughcolor=C["bg"], arrowcolor=C["text_dim"], bordercolor=C["bg"])
         except Exception: pass
 
     def _start_ipc_loop(self):
@@ -386,6 +388,7 @@ class FPXTimeTracker:
         for c in w.winfo_children(): self._bst(c)
 
     def _on_frame_cfg(self, e):
+        if getattr(self, '_rebuilding', False): return
         bb = self._canvas.bbox("all")
         if bb: self._canvas.configure(scrollregion=(0, 0, bb[2], max(bb[3], self._canvas.winfo_height())))
 
@@ -501,40 +504,55 @@ class FPXTimeTracker:
     def _render_list(self):
         try: sp = self._canvas.yview()[0]
         except Exception: sp = 0.0
-        # Flicker-Reduktion: Scrollbar-Callback stumm schalten während des Rebuilds
-        try: self._canvas.configure(yscrollcommand=lambda *a: None)
-        except Exception: pass
-        def _restore_scroll():
+        self._rebuilding = True
+        # Windows: Redraws während des Rebuilds unterdrücken (kein Flackern)
+        hwnd = 0; _cty = None
+        if IS_WIN:
             try:
-                self._canvas.configure(yscrollcommand=self._sb_w.set)
-                self._canvas.yview_moveto(sp)
+                import ctypes as _cty
+                hwnd = self.root.winfo_id()
+                _cty.windll.user32.SendMessageW(hwnd, 0x000B, 0, 0)  # WM_SETREDRAW = FALSE
+            except Exception: hwnd = 0
+        try:
+            try: self._canvas.configure(yscrollcommand=lambda *a: None)
             except Exception: pass
-        self.root.after_idle(_restore_scroll)
-        for w in self._list_f.winfo_children(): w.destroy()
-        if self.loading:
-            tk.Label(self._list_f, text="Todos werden geladen...", font=(FONT_MAIN,13), bg=C["bg"], fg=C["text"]).pack(pady=50)
-            self.root.after(100, lambda: self._bst(self._list_f)); return
-        if self.load_error:
-            tk.Label(self._list_f, text="Verbindungsfehler", font=(FONT_MAIN,13,"bold"), bg=C["bg"], fg=C["red"]).pack(pady=(40,8))
-            tk.Label(self._list_f, text=self.load_error[:100], font=(FONT_MAIN,10), bg=C["bg"], fg=C["text_dim"], wraplength=360).pack()
-            rb = tk.Label(self._list_f, text="Erneut versuchen", font=(FONT_MAIN,12), bg=C["accent"], fg=C["bg"], padx=14, pady=7, cursor="arrow"); rb.pack(pady=16)
-            rb.bind("<Button-1>", lambda e: self._load_todos())
-            self.root.after(100, lambda: self._bst(self._list_f)); return
-        if not self.todos_overdue and not self.todos_today:
-            tk.Label(self._list_f, text="Keine offenen Todos", font=(FONT_MAIN,13), bg=C["bg"], fg=C["text_mid"]).pack(pady=60)
-            self.root.after(100, lambda: self._bst(self._list_f)); return
-        if self.todos_overdue:
-            self._rgh("Abgelaufen", sum(self._gm(t.get("urno", 0)) for t in self.todos_overdue), C["orange"])
-            seen_d = []
-            for t in self.todos_overdue:
-                fd = (t.get("until_datetime") or t.get("from_datetime") or "")[:10]
-                if fd not in seen_d: seen_d.append(fd); self._rds(fd, fd in self._collapsed_dates)
-                if fd not in self._collapsed_dates: self._rtr(t, overdue=True)
-        if self.todos_today:
-            self._rgh("Heute", sum(self._gm(t.get("urno", 0)) for t in self.todos_today), C["text_mid"])
-            for t in self.todos_today: self._rtr(t)
-        tk.Frame(self._list_f, bg=C["bg"], height=12).pack(fill="x")
-        self.root.after(100, lambda: self._bst(self._list_f))
+            for w in self._list_f.winfo_children(): w.destroy()
+            if self.loading:
+                tk.Label(self._list_f, text="Todos werden geladen...", font=(FONT_MAIN,13), bg=C["bg"], fg=C["text"]).pack(pady=50)
+            elif self.load_error:
+                tk.Label(self._list_f, text="Verbindungsfehler", font=(FONT_MAIN,13,"bold"), bg=C["bg"], fg=C["red"]).pack(pady=(40,8))
+                tk.Label(self._list_f, text=self.load_error[:100], font=(FONT_MAIN,10), bg=C["bg"], fg=C["text_dim"], wraplength=360).pack()
+                rb = tk.Label(self._list_f, text="Erneut versuchen", font=(FONT_MAIN,12), bg=C["accent"], fg=C["bg"], padx=14, pady=7, cursor="arrow"); rb.pack(pady=16)
+                rb.bind("<Button-1>", lambda e: self._load_todos())
+            elif not self.todos_overdue and not self.todos_today:
+                tk.Label(self._list_f, text="Keine offenen Todos", font=(FONT_MAIN,13), bg=C["bg"], fg=C["text_mid"]).pack(pady=60)
+            else:
+                if self.todos_overdue:
+                    self._rgh("Abgelaufen", sum(self._gm(t.get("urno", 0)) for t in self.todos_overdue), C["orange"])
+                    seen_d = []
+                    for t in self.todos_overdue:
+                        fd = (t.get("until_datetime") or t.get("from_datetime") or "")[:10]
+                        if fd not in seen_d: seen_d.append(fd); self._rds(fd, fd in self._collapsed_dates)
+                        if fd not in self._collapsed_dates: self._rtr(t, overdue=True)
+                if self.todos_today:
+                    self._rgh("Heute", sum(self._gm(t.get("urno", 0)) for t in self.todos_today), C["text_mid"])
+                    for t in self.todos_today: self._rtr(t)
+                tk.Frame(self._list_f, bg=C["bg"], height=12).pack(fill="x")
+            self.root.update_idletasks()
+            self._rebuilding = False
+            bb = self._canvas.bbox("all")
+            if bb:
+                self._canvas.configure(scrollregion=(0, 0, bb[2], max(bb[3], self._canvas.winfo_height())))
+            self._canvas.configure(yscrollcommand=self._sb_w.set)
+            self._canvas.yview_moveto(sp)
+            self._bst(self._list_f)
+        finally:
+            if hwnd and _cty:
+                try:
+                    _cty.windll.user32.SendMessageW(hwnd, 0x000B, 1, 0)  # WM_SETREDRAW = TRUE
+                    # RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN = 0x0085
+                    _cty.windll.user32.RedrawWindow(hwnd, None, None, 0x0085)
+                except Exception: pass
 
     def _rgh(self, label, total=0, color=None):
         color = color or C["text_mid"]; hf = tk.Frame(self._list_f, bg=C["bg"], height=36); hf.pack(fill="x"); hf.pack_propagate(False)
@@ -566,12 +584,12 @@ class FPXTimeTracker:
         outer = tk.Frame(self._list_f, bg=rbg); outer.pack(fill="x")
         bc = C["green"] if ia else (C["accent"] if bkd else (C["orange"] if overdue else C["border"]))
         tk.Frame(outer, bg=bc, width=3).pack(side="left", fill="y")
-        body = tk.Frame(outer, bg=rbg); body.pack(side="left", fill="both", expand=True, padx=(10,10), pady=(10,8))
+        body = tk.Frame(outer, bg=rbg); body.pack(side="left", fill="both", expand=True, padx=(10,10), pady=(7,5))
         proj = (todo.get("project") or {}); pno = proj.get("projectno", "")
         sc = todo.get("service_code") or {}; scn = get_sc_name(sc) or self.sc_map.get(sc.get("urno") if isinstance(sc, dict) else sc, "")
         hl = todo.get("hours_left")
         r0 = tk.Frame(body, bg=rbg); r0.pack(fill="x")
-        tk.Label(r0, text=pno, font=(FONT_MAIN,10), bg=rbg, fg=C["accent"], anchor="w").pack(side="left")
+        tk.Label(r0, text=pno, font=(FONT_MAIN,9), bg=rbg, fg=C["accent"], anchor="w").pack(side="left")
         if overdue:
             itf = u in self._force_today
             tb = tk.Label(r0, text="heute", font=(FONT_MAIN,9), bg=C["accent"] if itf else C["card2"],
@@ -580,17 +598,28 @@ class FPXTimeTracker:
             tb.bind("<Button-1>", lambda e, x=u: (self._force_today.discard(x) if x in self._force_today else self._force_today.add(x), self._render_list()))
         r1 = tk.Frame(body, bg=rbg); r1.pack(fill="x", pady=(1,0))
         pb_bg = C["green"] if ia else C["accent"]; pb_hbg = "#5DCF8A" if ia else "#5AAECC"
-        pf = tk.Frame(r1, bg=pb_bg, width=28, height=24); pf.pack(side="right", padx=(6,0)); pf.pack_propagate(False)
-        pl = tk.Label(pf, text="⏸" if ia else "▶", font=(FONT_MAIN,11), bg=pb_bg, fg=C["text"], cursor="arrow"); pl.place(relx=.5, rely=.5, anchor="center")
-        for w in [pf, pl]:
-            w.bind("<Button-1>", lambda e, x=u: self._tt(x))
-            w.bind("<Enter>", lambda e, a=pf, b=pl, h=pb_hbg: (a.config(bg=h), b.config(bg=h)))
-            w.bind("<Leave>", lambda e, a=pf, b=pl, o=pb_bg: (a.config(bg=o), b.config(bg=o)))
+        btn_w, btn_h = s(34), s(30)
+        pf = tk.Canvas(r1, width=btn_w, height=btn_h, highlightthickness=0, cursor="arrow", bg=pb_bg)
+        pf.pack(side="right", padx=(6,0))
+        def _draw_icon(bg=pb_bg, _ia=ia, _c=pf):
+            _c.delete("all"); _c.config(bg=bg)
+            cx, cy = btn_w//2, btn_h//2
+            if _ia:
+                bw, bh = max(3, s(3)), s(11); gap = s(4)
+                _c.create_rectangle(cx-gap-bw, cy-bh//2, cx-gap, cy+bh//2, fill=C["text"], outline="")
+                _c.create_rectangle(cx+gap, cy-bh//2, cx+gap+bw, cy+bh//2, fill=C["text"], outline="")
+            else:
+                sz = s(9)
+                _c.create_polygon(cx-sz//2, cy-sz, cx-sz//2, cy+sz, cx+sz, cy, fill=C["text"], outline="")
+        _draw_icon()
+        pf.bind("<Button-1>", lambda e, x=u: self._tt(x))
+        pf.bind("<Enter>", lambda e, bg=pb_hbg: _draw_icon(bg))
+        pf.bind("<Leave>", lambda e, bg=pb_bg: _draw_icon(bg))
         nf = tk.Frame(r1, bg=rbg); nf.pack(side="left", fill="x", expand=True)
-        tk.Label(nf, text=todo.get("shortinfo", "?"), font=(FONT_MAIN,12,"bold") if not bkd else (FONT_MAIN,12), bg=rbg, fg=C["text"] if not bkd else C["text_mid"], anchor="w", wraplength=220, justify="left").pack(side="left")
+        tk.Label(nf, text=todo.get("shortinfo", "?"), font=(FONT_MAIN,11,"bold") if not bkd else (FONT_MAIN,11), bg=rbg, fg=C["text"] if not bkd else C["text_mid"], anchor="w", wraplength=220, justify="left").pack(side="left")
         dl = tk.Label(nf, text="✎", font=(FONT_MAIN,11), bg=rbg, fg=C["yellow"], cursor="arrow", padx=2); dl.pack(side="left", anchor="n", pady=1)
         dl.bind("<Button-1>", lambda e, x=u: self._tdesc(x))
-        r2 = tk.Frame(body, bg=rbg); r2.pack(fill="x", pady=(3,0))
+        r2 = tk.Frame(body, bg=rbg); r2.pack(fill="x", pady=(2,0))
         da = pend == "erledigt"; db_bg = C["green"] if da else C["green_dim"]; db_hbg = "#5DCF8A" if da else "#2A7048"
         db = tk.Label(r2, text="✓ Erledigt" if da else "Erledigt", font=(FONT_MAIN,10), bg=db_bg, fg=C["text"], padx=8, pady=2, cursor="arrow"); db.pack(side="left", padx=(0,4))
         db.bind("<Button-1>", lambda e, x=u: self._tpend(x, "erledigt"))
@@ -712,7 +741,7 @@ class FPXTimeTracker:
 
     def _delpart(self, u, i):
         if not (0 <= i < len(self._gp(u))): return
-        if not messagebox.askyesno("Part löschen", "Zeit löschen?", parent=self.root): return
+        if not self._askdialog("Part löschen", "Zeit löschen?"): return
         if self.timer_running and self.active_urno == u: self._stop_timer(add_part=False)
         self._dp(u, i); self._render_list(); self._draw_timer_block()
 
@@ -737,20 +766,20 @@ class FPXTimeTracker:
                 r = requests.get(f"{PROAD_URL}/projects", headers=self.hdr, params={"order_date":f"{(date.today() - timedelta(days=365)).strftime('%Y-%m-%d')}--2027-12-31"}, timeout=20, verify=SSL_VERIFY); r.raise_for_status()
                 proj = next((p for p in r.json().get("project_list", []) if p.get("projectno", "").upper() == proj_no), None)
                 if not proj:
-                    self.root.after(0, lambda: messagebox.showerror("Fehler", f"Projekt '{proj_no}' nicht gefunden.", parent=self.root)); return
+                    self.root.after(0, lambda: self._dialog("Fehler", f"Projekt '{proj_no}' nicht gefunden.", "error")); return
                 rs = requests.get(f"{PROAD_URL}/service_codes", headers=self.hdr, timeout=15, verify=SSL_VERIFY)
                 scl = rs.json().get("service_code_list", []) if rs.ok else []
                 sc = next((s for s in scl if s.get("shortname", "").upper() == sc_key or s.get("name", "").upper() == sc_key), None)
                 if not sc:
-                    self.root.after(0, lambda: messagebox.showerror("Fehler", f"'{sc_key}' nicht gefunden.", parent=self.root)); return
+                    self.root.after(0, lambda: self._dialog("Fehler", f"'{sc_key}' nicht gefunden.", "error")); return
                 d = today_str(); pname = proj.get("project_name") or proj_no
                 payload = {"shortinfo":f"PM {pname}", "urno_project":proj["urno"], "urno_responsible":self.person_urno, "urno_manager":self.person_urno, "status":"100", "from_datetime":f"{d}T00:00:00", "until_datetime":f"{d}T00:00:00", "hours_planned":hours, "hours_left":hours, "urno_service_code":sc["urno"]}
                 rt = requests.post(f"{PROAD_URL}/tasks", headers=self.hdr, json=payload, timeout=20, verify=SSL_VERIFY)
                 if not rt.ok:
-                    self.root.after(0, lambda: messagebox.showerror("Fehler", rt.text[:120], parent=self.root)); return
-                self.root.after(0, lambda: (self._qe_var.set(""), messagebox.showinfo("OK", f"Todo 'PM {pname}' ({hours}h) angelegt.", parent=self.root), self._load_todos()))
+                    self.root.after(0, lambda: self._dialog("Fehler", rt.text[:120], "error")); return
+                self.root.after(0, lambda: (self._qe_var.set(""), self._dialog("OK", f"Todo 'PM {pname}' ({hours}h) angelegt.", "ok"), self._load_todos()))
             except Exception as ex:
-                self.root.after(0, lambda: messagebox.showerror("Fehler", str(ex)[:120], parent=self.root))
+                self.root.after(0, lambda: self._dialog("Fehler", str(ex)[:120], "error"))
         threading.Thread(target=do, daemon=True).start()
 
     def _close_day(self):
@@ -769,7 +798,7 @@ class FPXTimeTracker:
             if (mins > 0 or pend) and str(u) not in self._booked_today:
                 to_exp.append((t, mins))
         if not to_exp:
-            messagebox.showinfo("Fertig", "Nichts zu exportieren.", parent=self.root); return
+            self._dialog("Fertig", "Nichts zu exportieren.", "info"); return
         enr = []
         for to, m in to_exp:
             try:
@@ -784,7 +813,7 @@ class FPXTimeTracker:
             elif not proj.get("urno"): err.append(f"  - {name}: Kein Projekt")
             else: val.append((t, m))
         if err:
-            messagebox.showwarning("Übersprungen", "\n".join(err), parent=self.root)
+            self._dialog("Übersprungen", "\n".join(err), "warn")
             if not val: return
             enr = val
         lines, tot = [], 0
@@ -794,7 +823,7 @@ class FPXTimeTracker:
             time_str = fmt_hhmm(m) if m > 0 else "—"
             status_str = f" [{p.upper()}]" if p else ""
             lines.append(f"  {pno}  {time_str}{status_str}\n    {t.get('shortinfo', '?')[:34]}")
-        if not messagebox.askyesno("Tag abschliessen", "Zeiten übertragen:\n\n" + "\n".join(lines) + f"\n\nGesamt: {fmt_hhmm(tot)}\n\nJetzt?", parent=self.root): return
+        if not self._askdialog("Tag abschliessen", "Zeiten übertragen:\n\n" + "\n".join(lines) + f"\n\nGesamt: {fmt_hhmm(tot)}\n\nJetzt?"): return
         for t, m in enr:
             u = t.get("urno")
             if u in qt_pending and self._gm(u) == 0:
@@ -847,10 +876,45 @@ class FPXTimeTracker:
         threading.Thread(target=push, daemon=True).start()
         self._render_list(); self._draw_timer_block()
         if er:
-            messagebox.showwarning("Teilerfolg", f"OK: {', '.join(ok)}\nFehler:\n" + "\n".join(er), parent=self.root)
+            self._dialog("Teilerfolg", f"OK: {', '.join(ok)}\nFehler:\n" + "\n".join(er), "warn")
         else:
             _play_success_sound()
-            messagebox.showinfo("Übertragen!", f"Alle {len(ok)} Einträge übertragen.", parent=self.root)
+            self._dialog("Übertragen!", f"Alle {len(ok)} Einträge übertragen.", "ok")
+
+    def _dlg_pos(self, d):
+        d.update_idletasks()
+        dw, dh = d.winfo_reqwidth(), d.winfo_reqheight()
+        rx, ry = self.root.winfo_x(), self.root.winfo_y()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        x = rx + (rw - dw) // 2
+        y = ry + (rh - dh) // 2
+        d.geometry(f"+{x}+{y}")
+
+    def _dialog(self, title, msg, kind="info"):
+        d = tk.Toplevel(self.root); d.title(title); d.configure(bg=C["panel"]); d.resizable(False, False)
+        d.transient(self.root); d.grab_set()
+        col = {"info": C["accent"], "warn": C["orange"], "error": C["red"], "ok": C["green"]}.get(kind, C["accent"])
+        f = tk.Frame(d, bg=C["panel"], padx=s(20), pady=s(14)); f.pack()
+        tk.Label(f, text=msg, font=(FONT_MAIN, 11), bg=C["panel"], fg=C["text"], wraplength=s(280), justify="center").pack(pady=(0, s(12)))
+        btn = tk.Label(f, text="OK", font=(FONT_MAIN, 11, "bold"), bg=col, fg=C["bg"], padx=s(20), pady=s(5), cursor="arrow"); btn.pack()
+        btn.bind("<Button-1>", lambda e: d.destroy())
+        d.bind("<Return>", lambda e: d.destroy()); d.bind("<Escape>", lambda e: d.destroy())
+        self._dlg_pos(d); d.focus_set(); d.wait_window()
+
+    def _askdialog(self, title, msg):
+        result = [False]
+        d = tk.Toplevel(self.root); d.title(title); d.configure(bg=C["panel"]); d.resizable(False, False)
+        d.transient(self.root); d.grab_set()
+        f = tk.Frame(d, bg=C["panel"], padx=s(20), pady=s(14)); f.pack()
+        tk.Label(f, text=msg, font=(FONT_MAIN, 11), bg=C["panel"], fg=C["text"], wraplength=s(300), justify="center").pack(pady=(0, s(14)))
+        bf = tk.Frame(f, bg=C["panel"]); bf.pack()
+        no_b = tk.Label(bf, text="Nein", font=(FONT_MAIN, 11), bg=C["gray_btn"], fg=C["text"], padx=s(16), pady=s(5), cursor="arrow"); no_b.pack(side="left", padx=(0, s(8)))
+        yes_b = tk.Label(bf, text="Ja", font=(FONT_MAIN, 11, "bold"), bg=C["accent"], fg=C["bg"], padx=s(16), pady=s(5), cursor="arrow"); yes_b.pack(side="left")
+        def _yes(): result[0] = True; d.destroy()
+        yes_b.bind("<Button-1>", lambda e: _yes()); no_b.bind("<Button-1>", lambda e: d.destroy())
+        d.bind("<Return>", lambda e: _yes()); d.bind("<Escape>", lambda e: d.destroy())
+        self._dlg_pos(d); d.focus_set(); d.wait_window()
+        return result[0]
 
     def run(self): self.root.mainloop()
 
