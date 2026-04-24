@@ -214,13 +214,36 @@ Beim Start pollt der Tray GitHub (`/releases/latest`) gegen `GITHUB_REPO` in `fp
 
 ---
 
-## 11. Änderungen in v0.8.1 (diese Runde)
+## 11. Aktueller Stand v0.8.0 (stabil, auf GitHub)
 
-1. Per-Monitor-V2 DPI-Awareness (scharfe Fonts bei 125/150/175 %).
-2. Popover öffnet sich jetzt an der Taskleiste (unten/oben/links/rechts).
-3. User-Icon-Erkennung in `make_icons.py`.
-4. Render-Jitter beim Button-Klick behoben (Scroll-Restore in `after_idle`).
-5. „✓ übertragen" erscheint jetzt auch bei Status-only-Todos.
-6. Export-Button hat flexible Höhe + kürzeren Text im Popover.
+### Was funktioniert
+- Tray-Icon, Singleton-Lock, Popover öffnet sich an der Taskleiste
+- Per-Monitor-V2 DPI-Awareness, `tk scaling = SCALE` (dpi/96), scharfe Fonts
+- Fensterhöhe gegen echte Arbeitsfläche begrenzt; Auto-Hide-Taskleiste wird berücksichtigt (immer 50px Abstand vom Bildschirmrand)
+- **Kein Flackern beim Button-Klick**: `WM_SETREDRAW = FALSE` während des Listen-Rebuilds, danach einmaliger sauberer Repaint
+- **Scroll-Position bleibt erhalten**: `_rebuilding`-Flag verhindert dass `_on_frame_cfg` die Scrollregion während des Rebuilds zurücksetzt
+- Play/Pause-Button als Canvas gezeichnet (keine Unicode-Rendering-Probleme)
+- Alle Dialoge (`_dialog` / `_askdialog`) erscheinen zentriert im App-Fenster, nicht in der Bildschirmmitte
+- `Icon.ico` im Repo-Root wird automatisch als App- und Tray-Icon verwendet
+- `build_local.bat` für schnelle lokale Test-Builds (baut `.exe` + startet sie)
 
-Details im Plan `/.claude/plans/es-gibt-noch-einige-happy-pearl.md`.
+### Bekannte Einschränkungen
+- **Code-Signing**: Unsigniert → Windows SmartScreen warnt beim ersten Start. Fix später mit EV-/OV-Zertifikat.
+- **Multi-Monitor-DPI**: Popover-Position nutzt nur den primären Monitor. Für Nebenmonitor müsste `MonitorFromPoint` genutzt werden.
+- **Logging**: Nur prints im Dev-Modus. Für Remote-Diagnose wäre `%APPDATA%\FPXTimetracker\log.txt` sinnvoll.
+
+### Release-Workflow
+```powershell
+# Nach Änderungen:
+git add -A
+git commit -m "v0.8.x: beschreibung"
+
+# Neuer Release (neue Version):
+git tag v0.9.0
+git push && git push --tags
+
+# Bestehenden Tag neu bauen (immer v0.8.0 während stabile Phase):
+git push origin :refs/tags/v0.8.0
+git tag -f v0.8.0
+git push origin v0.8.0
+```
